@@ -36,31 +36,19 @@ Evaluation - Mean squared error of final trajectory using L2 distance where n = 
 - note it got cast to float32 on export, need to cast it back to int on import 
 
 ## Inductive Biases
-1. Translation / Rotation invariance bias - **data preprocessing step** - the bias is that the action of rotation or translation is what care we about, not the headings or absolute locations. This reduces variability the model must handle.  Instead of seeing the same maneuver in hundreds of global orientations/locations, it sees it in one canonical frame. 
+1. [✅] Translation / Rotation invariance bias - **data preprocessing step** - the bias is that the action of rotation or translation is what care we about, not the headings or absolute locations. This reduces variability the model must handle.  Instead of seeing the same maneuver in hundreds of global orientations/locations, it sees it in one canonical frame. 
 
-Practical example
+2. [✅] Temporal (time based) smooth changes bias - sampling at 10Hz or 1 sample every 1/10th of a second.  We are using the previous 50 samples to predict the next 60.  Transformer/GRU/LSTM/1D-CNN are designed to model sequential data efficiently. This can encode a vector representation (50x6) of each agent to predict the next 60.
 
-```
-# make ego agent temporaly end up at origin (0,0)
-# make all other agents relative to ego agent
-ego_pos = pos[0][49]     # 49 is last frame
+3. [⛔] Road network bias - Vehicle motion constrained by the road. **We don't have map data** so nothing to do here. If we did, we could use vecotrized map encoders (laneGCN, TNT). Road context can improve MSE by 30-40%.
 
-for a in range(50): #50 agents
-  for t in range(50): #50 time steps
-    pos_rel[a][t] = pos[a][t] - ego_pos  
-```
+4. [✅] Social bias - nearby agents influence each other more than distance ones.  Use self atttention to learn which neighboring nodes are more important when aggregating information. Graph attention Network (GAT) / Graph Neural Network (GNN) /  / HiVT
 
-2. Temporal (time based) smooth changes bias - sampling at 10Hz or 1 sample every 1/10th of a second.  We are using the previous 50 samples to predict the next 60.  GRU/LSTM/1D-CNN are designed to model sequential data efficiently. This can encode a vector representation (50x6) of each agent to predict the next 60.
+5. [ ] Multi-Modal bias - given past there are many futures possible.  Anchor based - multipath++, query based - QCNet.
 
-3. Road network bias - Vehicle motion constrained by the road. **We don't have map data** so nothing to do here. If we did, we could use vecotrized map encoders (laneGCN, TNT). Road context can improve MSE by 30-40%.
+6. [ ] Kinematic & Physical constraints Bias - vehicles must abide by the laws of physics. Vehicle acceleration, turn rates, and curvature of turns is bounded.  SIMPL uses polynomial parameterization with bernstein polynomials for efficiency. Post-hoc filtering clip predictions to physics boundaries.
 
-4. Social bias - nearby agents influence each other more than distance ones.  Use self atttention to learn which neighboring nodes are more important when aggregating information. Graph attention Network (GAT) / Graph Neural Network (GNN) /  / HiVT
-
-5. Multi-Modal bias - given past there are many futures possible.  Anchor based - multipath++, query based - QCNet.
-
-6. Kinematic & Physical constraints Bias - vehicles must abide by the laws of physics. Vehicle acceleration, turn rates, and curvature of turns is bounded.  SIMPL uses polynomial parameterization with bernstein polynomials for efficiency. Post-hoc filtering clip predictions to physics boundaries.
-
-7. Scene centric consistency bias - All agents futures jointly plausible.  This bias is mainly used for multi-agent forcasting.  **We are single-agent forcasting**. FJMP - factorial DAG decoder predicts agents in topological order each conditioning on the previous. Joint transformers used in multi-agent forcasting.
+7. [⛔] Scene centric consistency bias - All agents futures jointly plausible.  This bias is mainly used for multi-agent forcasting.  **We are single-agent forcasting**. FJMP - factorial DAG decoder predicts agents in topological order each conditioning on the previous. Joint transformers used in multi-agent forcasting.
 
 ## An example of something created by chat gpt research based on current SOTAS
 Chat GPT's frankenstein 
