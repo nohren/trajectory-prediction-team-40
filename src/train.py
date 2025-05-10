@@ -268,7 +268,7 @@ if __name__ == "__main__":
 
     # Save predictions to CSV
     output = np.column_stack((ids, preds_flat))
-    header = "input,x,y"
+    header = "index,x,y"
     np.savetxt(
         output_csv,
         output,
