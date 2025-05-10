@@ -50,7 +50,7 @@ cfg = {
         "weight_decay": 1e-5,
         "epochs": 1000,
         "warm_up": 5,
-        "patience": 15,
+        "patience": 70,
         "betas": (0.9, 0.999),
         "eta_min": 1e-6,
     },
@@ -214,7 +214,7 @@ if __name__ == "__main__":
 
         # Print progress
         print(
-            f"Epoch {epoch}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}, Approx Kaggle Score: {kaggle_score:.6f}"
+            f"Epoch {epoch}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}, Approx Kaggle Score: {kaggle_score:.3f}"
         )
         writer.add_scalar("Loss/Train", train_loss, epoch)
         writer.add_scalar("Loss/Val", val_loss, epoch)

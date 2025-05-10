@@ -505,12 +505,8 @@ def evaluate_kaggle(model, val_loader, val_dataset, device):
     Returns: (kaggle_score, val_mse_norm)
     """
     model.eval()
-
-    mse_loss = nn.MSELoss(reduction="mean")
-    mse_sum = 0.0
-    n_batches = 0
-
-    sq_err_global = 0.0  # accumulate Σ‖p̂ – p‖²  in metres²
+    total_sse = 0.0  # accumulate Σ‖p̂ – p‖²  in metres²
+    total_pts = 0.0  # accumulate number of points
 
     with torch.no_grad():
         for past, mask, future, centers, thetas in val_loader:
@@ -531,17 +527,11 @@ def evaluate_kaggle(model, val_loader, val_dataset, device):
             gt_world = inverse_transform(fut_aligned, centers, thetas)
 
             # -------- Kaggle global score -----------------------
-            diff = pred_world - gt_world  # (B,60,2)
-            sq_err = (diff**2).sum()
-            sq_err_global += sq_err  # scalar
+            diff = pred_world - gt_world
+            total_sse += np.square(diff).sum()
+            total_pts += diff.size  # B×60×2
 
-            # -------- cheap in-frame MSE for monitoring ---------
-            # mse_sum += mse_loss(
-            #     torch.from_numpy(pred_norm), torch.from_numpy(future)
-            # ).item()
-            n_batches += 1
-
-    kaggle_score = np.sqrt(sq_err_global)  # √Σ‖.‖²
+    kaggle_score = np.sqrt(total_sse / total_pts)  # √Σ‖.‖²
     val_mse_norm = (
         None  # mse_sum / n_batches  # implement on world scale at some point if useful?
     )
