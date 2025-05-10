@@ -38,7 +38,7 @@ Update your info
 
 ```
 
-`cp kaggle.json ~/.kaggle/kaggle.json`
+`mkdir ~/.kaggle && cp kaggle.json ~/.kaggle/kaggle.json`
 
 `chmod 600 ~/.kaggle/kaggle.json`
 
