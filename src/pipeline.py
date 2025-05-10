@@ -32,9 +32,9 @@ def invariance_transform(past, accel_dt=None):
         [:,:,4]   = heading  (rad)
         [:,:,5]   = type_id  (int)
     accel_dt : float or None
-        Sampling period in seconds.  If given, an acceleration
-        channel is added (Δv / Δt) so output has 8 features.
-        If None, acceleration is omitted and output has 6 features.
+        Sampling period in seconds. If given, two acceleration channels (ax, ay)
+        are added so output has 9 features. If None, acceleration is omitted and
+        output has 7 features.
 
     Returns
     -------
@@ -570,12 +570,11 @@ def predict(model, test_loader, test_dataset, device):
 
     with torch.no_grad():
         for past, mask, centers, thetas in test_loader:
-            past.to(device)
-            mask.to(device)
+            # Move inputs to device
+            past, mask = past.to(device), mask.to(device)
 
             # predict in normalized aligned space
-            pred_norm = model(past, mask)
-            pred_norm = pred_norm.cpu().numpy()
+            pred_norm = model(past, mask).cpu().numpy()
 
             # undo normalization (still aligned)
             pred_aligned = test_dataset.denormalize_prediction(pred_norm)
