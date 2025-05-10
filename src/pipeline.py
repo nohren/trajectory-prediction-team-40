@@ -56,9 +56,9 @@ def invariance_transform(past, accel_dt=None):
 
     # --- rotate so ego’s last heading is +X --------------------------
     theta = heading[0, -1]  # scalar
-    c, s = np.cos(-theta), np.sin(-theta)
+    c, s = np.cos(-theta), np.sin(-theta)  # rotation matrix
 
-    # Rotate vectors
+    # Rotate pos and vel
     R = np.array([[c, -s], [s, c]])  # 2×2
     pos_r = pos_t @ R.T  # (A,T,2)
     vel_r = vel @ R.T  # (A,T,2)
@@ -137,13 +137,15 @@ def inverse_transform(pred, centers, thetas):
 
 def collate_fn(batch):
     l = len(batch[0])
-    if l == 3:
+    if l == 5:
         # train: (past,mask,future)
-        pasts, masks, futures = zip(*batch)
+        pasts, masks, futures, centers, thetas = zip(*batch)
         return (
             torch.stack(pasts),
             torch.stack(masks),
             torch.stack(futures),
+            torch.stack(centers),  # shape (B,2)
+            torch.stack(thetas),  # shape (B,)
         )
     elif l == 4:
         # test: (past,mask,center,theta)
@@ -171,6 +173,11 @@ class TrajectoryDataset(Dataset):
             npz = np.load(input_path)
             self.data = npz["data"]
 
+        # scene0 = self.data[0]  # (A, T, F)
+        # print("feature dim  :", scene0.shape[-1])
+        # print("unique vals in col 5:", np.unique(scene0[..., 5]))
+        # print("unique vals in last :", np.unique(scene0[..., -1]))
+
         self.T_past = cfg["data"]["T_past"]
         self.T_future = cfg["data"]["T_future"]
         self.accel_dt = cfg["data"]["accel_dt"]
@@ -182,47 +189,62 @@ class TrajectoryDataset(Dataset):
     def calculate_normalization_stats(self):
         """Calculate mean and std for efficient normalization"""
         # align past data
-        all_pos = []
-        all_vel = []
+        all_pos, all_vel, all_acc = [], [], []
         for scene in self.data:
             past = scene[:, : self.T_past, :].copy()
-            past_aligned, _, _ = invariance_transform(past)
+            past_aligned, _, _ = invariance_transform(past, self.accel_dt)
 
             # collect positions & velocities across all agents & all time-steps
             all_pos.append(past_aligned[..., :2].reshape(-1, 2))
             all_vel.append(past_aligned[..., 2:4].reshape(-1, 2))
 
+            # collect acceleration if present
+            if self.accel_dt is not None and past_aligned.shape[-1] >= 6:
+                all_acc.append(past_aligned[..., 4:6].reshape(-1, 2))
+
+        # mask is there to exclude padded zeros used in trajectory data
+        # from the mean-/std-computation and
+        # to handle the corner-case where the slice being analysed contains nothing but padding
+
+        # ---------- positions ----------
         all_pos = np.concatenate(all_pos, axis=0)
-        all_vel = np.concatenate(all_vel, axis=0)
-
-        # Only consider non-zero values for position and velocity
-        # positions = self.data[..., :2]  # x, y positions
-        mask = np.abs(all_pos).sum(axis=-1) > 0
-
-        if mask.sum() > 0:
-            valid_positions = all_pos[mask]
-            self.pos_mean = valid_positions.mean(axis=0)
-            self.pos_std = valid_positions.std(axis=0)
-
-            # Ensure std is not zero to avoid division by zero
-            self.pos_std = np.maximum(self.pos_std, 1e-6)
+        mask = np.abs(all_pos).sum(-1) > 0
+        if mask.any():
+            valid_pos = all_pos[mask]
+            self.pos_mean = valid_pos.mean(0)
+            self.pos_std = np.maximum(valid_pos.std(0), 1e-6)
         else:
             self.pos_mean = np.zeros(2)
             self.pos_std = np.ones(2)
 
-        # Same for velocities
-        # velocities = self.data[..., 2:4]  # vx, vy velocities
-        mask = np.abs(all_vel).sum(axis=-1) > 0
-
-        if mask.sum() > 0:
-            valid_velocities = all_vel[mask]
-            self.vel_mean = valid_velocities.mean(axis=0)
-            self.vel_std = valid_velocities.std(axis=0)
-            self.vel_std = np.maximum(self.vel_std, 1e-6)
+        # ---------- velocities ----------
+        all_vel = np.concatenate(all_vel, axis=0)
+        mask = np.abs(all_vel).sum(-1) > 0
+        if mask.any():
+            valid_vel = all_vel[mask]
+            self.vel_mean = valid_vel.mean(0)
+            self.vel_std = np.maximum(valid_vel.std(0), 1e-6)
         else:
             self.vel_mean = np.zeros(2)
             self.vel_std = np.ones(2)
 
+        # ---------- accelerations ----------
+        if all_acc:  # list not empty
+            all_acc = np.concatenate(all_acc, axis=0)
+            mask = np.abs(all_acc).sum(-1) > 0
+            if mask.any():
+                valid_acc = all_acc[mask]
+                self.acc_mean = valid_acc.mean(0)
+                self.acc_std = np.maximum(valid_acc.std(0), 1e-6)
+            else:
+                self.acc_mean = np.zeros(2)
+                self.acc_std = np.ones(2)
+        else:
+            # if accel_dt is None we still define attrs so code downstream is safe
+            self.acc_mean = np.zeros(2)
+            self.acc_std = np.ones(2)
+
+    # (x − μ) / σ
     def normalize_features(self, features):
         """Normalize features efficiently"""
         normalized = features.copy()
@@ -230,9 +252,10 @@ class TrajectoryDataset(Dataset):
         normalized[..., 0:2] = (features[..., 0:2] - self.pos_mean) / self.pos_std
         # Normalize velocities (vx, vy)
         normalized[..., 2:4] = (features[..., 2:4] - self.vel_mean) / self.vel_std
-        # Normalize acceleration (ax, ay) # it's not present RN
-        # if features.shape[-1] >= 6:  # If acceleration is present
-        #     normalized[..., 4:6] = (features[..., 4:6] - self.vel_mean) / self.vel_std
+        # Normalize acceleration (ax, ay) #
+        if self.accel_dt is not None:
+            normalized[..., 4:6] = (features[..., 4:6] - self.acc_mean) / self.acc_std
+
         return normalized
 
     def __len__(self):
@@ -246,7 +269,7 @@ class TrajectoryDataset(Dataset):
 
         # Apply translation + rotation invariance per scene
         # (shifts ego → origin & rotates so ego’s heading is +x)
-        past_aligned, center, theta = invariance_transform(past)
+        past_aligned, center, theta = invariance_transform(past, self.accel_dt)
 
         # Normalize features
         past_aligned_normalized = self.normalize_features(past_aligned)
@@ -254,7 +277,7 @@ class TrajectoryDataset(Dataset):
         # Create mask for valid agents (based on position)
         mask = np.sum(np.abs(past[:, :, :2]), axis=(1, 2)) > 0
 
-        # For training data, also extract and normalize future trajectory of ego vehicle
+        # training loss is based on predicting the aligned + normalized future ego vehicle trajectory
         if not self.is_test and scene.shape[1] >= self.T_past + self.T_future:
             future_raw = scene[
                 0, self.T_past : self.T_past + self.T_future, :2
@@ -267,6 +290,10 @@ class TrajectoryDataset(Dataset):
                 torch.tensor(past_aligned_normalized, dtype=torch.float32),
                 torch.tensor(mask, dtype=torch.bool),
                 torch.tensor(future_aligned_normalized, dtype=torch.float32),
+                torch.tensor(
+                    center, dtype=torch.float32
+                ),  # needed to de-align per scene
+                torch.tensor(theta, dtype=torch.float32),
             )
 
         # For test data, only return aligned and normalized past
@@ -310,14 +337,7 @@ class AgentTypeEmbedding(nn.Module):
         self.embedding = nn.Embedding(num_types, d_model)
 
     def forward(self, x):
-        # Use default type if type information is not available
-        if (
-            x.shape[-1] == 6
-        ):  # If we only have x, y, vx, vy, ax, ay, heading, object type
-            # Create default type tensor (all zeros)
-            obj_type = torch.zeros(x.shape[:-1], dtype=torch.long, device=x.device)
-        else:
-            obj_type = x[..., -1].long()
+        obj_type = x[..., -1].long()
         return self.embedding(obj_type)
 
 
@@ -458,7 +478,7 @@ def train_epoch(model, dataloader, optimizer, device, clip_grad=0.3):
     criterion = nn.SmoothL1Loss()
 
     for batch in dataloader:
-        past, mask, future = [x.to(device) for x in batch]
+        past, mask, future, _, _ = [x.to(device) for x in batch]
 
         optimizer.zero_grad()
         pred = model(past, mask)
@@ -479,10 +499,54 @@ def train_epoch(model, dataloader, optimizer, device, clip_grad=0.3):
 # -------------------------------
 
 
-def kaggle_scoring_metric(preds, gt):
-    # assuming val_loader yields (B, 60, 2) preds in metres
-    errs = torch.linalg.norm(preds - gt, dim=-1)  # (B,60)
-    return (errs**2).sum().sqrt()
+def evaluate_kaggle(model, val_loader, val_dataset, device):
+    """
+    Computes Kaggle score √(Σ‖p̂ – p‖²) over the *entire* val set.
+    Returns: (kaggle_score, val_mse_norm)
+    """
+    model.eval()
+
+    mse_loss = nn.MSELoss(reduction="mean")
+    mse_sum = 0.0
+    n_batches = 0
+
+    sq_err_global = 0.0  # accumulate Σ‖p̂ – p‖²  in metres²
+
+    with torch.no_grad():
+        for past, mask, future, centers, thetas in val_loader:
+            past, mask = past.to(device), mask.to(device)
+            future = future.numpy()  # still normalised/aligned
+            centers = centers.numpy()
+            thetas = thetas.numpy()
+
+            # -------- model forward (normalised, aligned) --------
+            pred_norm = model(past, mask).cpu().numpy()
+
+            # -------- denormalise (still aligned) ---------------
+            pred_aligned = val_dataset.denormalize_prediction(pred_norm)
+            fut_aligned = val_dataset.denormalize_prediction(future)
+
+            # -------- de-align (world coords, metres) -----------
+            pred_world = inverse_transform(pred_aligned, centers, thetas)
+            gt_world = inverse_transform(fut_aligned, centers, thetas)
+
+            # -------- Kaggle global score -----------------------
+            diff = pred_world - gt_world  # (B,60,2)
+            sq_err = (diff**2).sum()
+            sq_err_global += sq_err  # scalar
+
+            # -------- cheap in-frame MSE for monitoring ---------
+            # mse_sum += mse_loss(
+            #     torch.from_numpy(pred_norm), torch.from_numpy(future)
+            # ).item()
+            n_batches += 1
+
+    kaggle_score = np.sqrt(sq_err_global)  # √Σ‖.‖²
+    val_mse_norm = (
+        None  # mse_sum / n_batches  # implement on world scale at some point if useful?
+    )
+
+    return kaggle_score, val_mse_norm
 
 
 def evaluate(model, val_loader, device):
@@ -492,7 +556,7 @@ def evaluate(model, val_loader, device):
 
     with torch.no_grad():
         for batch in val_loader:
-            past, mask, future = [x.to(device) for x in batch]
+            past, mask, future, _, _ = [x.to(device) for x in batch]
             pred = model(past, mask)
             loss = criterion(pred, future)
             total_loss += loss.item() * past.size(0)

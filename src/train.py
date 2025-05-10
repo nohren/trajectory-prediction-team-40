@@ -12,7 +12,7 @@ from pipeline import (
     collate_fn,
     predict,
     evaluate,
-    kaggle_scoring_metric,
+    evaluate_kaggle,
 )
 
 # -----------------------
@@ -29,10 +29,10 @@ cfg = {
     "data": {
         "T_past": 50,
         "T_future": 60,
-        "accel_dt": None,  # or e.g. 0.1 ... frame /sec 10Hz
+        "accel_dt": 0.1,  # time between intervals for 10Hz signals is 0.1... set to None not to use acceleration
     },
     "model": {
-        "feature_dim": 7,  # after invariance_transform
+        "feature_dim": 7,  # don't touch this, will be set automatically on line 55
         "d_model": 256,
         "nhead": 8,
         "num_layers": 4,
@@ -50,6 +50,9 @@ cfg = {
         "eta_min": 1e-6,
     },
 }
+
+# Automatically derive feature_dim from accel_dt: 7 without acceleration, 9 with
+cfg["model"]["feature_dim"] = 7 + (2 if cfg["data"]["accel_dt"] is not None else 0)
 
 
 # -----------------------
@@ -98,11 +101,15 @@ if __name__ == "__main__":
     test_ds = TrajectoryDataset(
         cfg, input_path=cfg["paths"]["test_input"], is_test=True
     )
+
     # Copy normalization stats from train_ds
-    test_ds.pos_mean = train_ds.pos_mean
-    test_ds.pos_std = train_ds.pos_std
-    test_ds.vel_mean = train_ds.vel_mean
-    test_ds.vel_std = train_ds.vel_std
+    for ds in (val_ds, test_ds):
+        ds.pos_mean = train_ds.pos_mean
+        ds.pos_std = train_ds.pos_std
+        ds.vel_mean = train_ds.vel_mean
+        ds.vel_std = train_ds.vel_std
+        ds.acc_mean = train_ds.acc_mean
+        ds.acc_std = train_ds.acc_std
 
     # Create data loaders
     train_loader = DataLoader(
@@ -188,6 +195,9 @@ if __name__ == "__main__":
         # Evaluate on validation set
         val_loss = evaluate(model, val_loader, device)
 
+        # evalute on Kaggle scoring metric
+        kaggle_score, _ = evaluate_kaggle(model, val_loader, val_ds, device)
+
         # Update learning rate
         if epoch <= warm_up_epochs:
             warm_up_scheduler.step()
@@ -196,7 +206,7 @@ if __name__ == "__main__":
 
         # Print progress
         print(
-            f"Epoch {epoch}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}, Approx Kaggle Score: "  # TODO add kaggle scorer - first denomoralize, then de-align, then score
+            f"Epoch {epoch}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}, Approx Kaggle Score: {kaggle_score:.6f}"
         )
         writer.add_scalar("Loss/Train", train_loss, epoch)
         writer.add_scalar("Loss/Val", val_loss, epoch)
