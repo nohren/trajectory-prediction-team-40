@@ -4,14 +4,14 @@ Argoverse 2 251B kaggle competion for trajectory prediction
 
 # Install dependencies
 
-If you haven’t created the env yet
+To create the env
 
 ```
 conda env create -f environment.yml
 conda activate tp
 ```
 
-If the env already exists, pull the new deps
+To update the env and pull new deps
 
 ```
 conda env update -f environment.yml
@@ -44,7 +44,7 @@ Update your info
 
 `rm kaggle.json`
 
-What you can do
+What you can do with it
 
 ```
 kaggle competitions files -c cse-251-b-2025 //test
