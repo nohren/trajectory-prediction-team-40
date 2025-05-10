@@ -214,7 +214,7 @@ if __name__ == "__main__":
 
         # Print progress
         print(
-            f"Epoch {epoch}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}, Approx Kaggle Score: {kaggle_score:.3f}"
+            f"Epoch {epoch}/{epochs} | Train Loss: {train_loss:.8f} | Val Loss: {val_loss:.8f}, Approx Kaggle Score: {kaggle_score:.3f}"
         )
         writer.add_scalar("Loss/Train", train_loss, epoch)
         writer.add_scalar("Loss/Val", val_loss, epoch)
