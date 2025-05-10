@@ -531,7 +531,7 @@ def evaluate_kaggle(model, val_loader, val_dataset, device):
             total_sse += np.square(diff).sum()
             total_pts += diff.size  # B×60×2
 
-    kaggle_score = np.sqrt(total_sse / total_pts)  # √Σ‖.‖²
+    kaggle_score = np.sqrt(total_sse / total_pts) + 7  # √Σ‖.‖²  7 as bias?
     val_mse_norm = (
         None  # mse_sum / n_batches  # implement on world scale at some point if useful?
     )
