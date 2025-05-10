@@ -15,6 +15,11 @@ from pipeline import (
     evaluate_kaggle,
 )
 
+device_count = torch.cuda.device_count()
+print(device_count)  # Should print 2
+for i in range(device_count):
+    print(torch.cuda.get_device_name(i))  # Name of GPU i
+
 # -----------------------
 # CONFIGURATION
 # -----------------------
@@ -136,7 +141,10 @@ if __name__ == "__main__":
     # ----------------------------------
 
     # Create model
-    model = ImprovedTrajectoryTransformer(cfg).to(device)
+    model = ImprovedTrajectoryTransformer(cfg)
+    if device_count > 1:
+        model = torch.nn.DataParallel(model)  # for multi-GPU
+    model.to(device)
 
     # create optimizer
     optimizer = torch.optim.AdamW(
